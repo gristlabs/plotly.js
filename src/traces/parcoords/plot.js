@@ -432,22 +432,9 @@ module.exports = function plot(gd, cdModule) {
         }
     };
 
-    var currentDims = {};
-    var initialDims = {};
-    var fullIndices = {};
-    var inputIndices = {};
-
-    cdModule.forEach(function(d, i) {
-        var trace = d[0].trace;
-        fullIndices[i] = trace.index;
-        var iIn = inputIndices[i] = trace._fullInput.index;
-        currentDims[i] = gd.data[iIn].dimensions;
-        initialDims[i] = gd.data[iIn].dimensions.slice();
-    });
+    calcAllTicks(cdModule);
 
     var state = parcoordsInteractionState();
-
-    calcAllTicks(cdModule);
 
     var vm = cdModule
         .filter(function(d) { return unwrap(d).trace.visible; })
