@@ -309,20 +309,11 @@ function viewModel(state, callbacks, model) {
                     state.linePickActive(false);
                 },
                 brushMove,
-                function(f) {
+                function() {
                     var p = viewModel;
                     p.focusLayer.render(p.panels, true);
                     p.pickLayer && p.pickLayer.render(p.panels, true);
                     state.linePickActive(true);
-                    if(callbacks && callbacks.filterChanged) {
-                        var invScale = domainToPaddedUnit.invert;
-
-                        // update gd.data as if a Plotly.restyle were fired
-                        var newRanges = f.map(function(r) {
-                            return r.map(invScale).sort(Lib.sorterAsc);
-                        }).sort(function(a, b) { return a[0] - b[0]; });
-                        callbacks.filterChanged(p.key, dimension._index, newRanges);
-                    }
                 }
             )
         };
@@ -575,10 +566,6 @@ module.exports = function parcoords(gd, cdModule, layout, callbacks) {
             p.focusLayer && p.focusLayer.render(p.panels);
             p.pickLayer && p.pickLayer.render(p.panels, true);
             state.linePickActive(true);
-
-            if(callbacks && callbacks.axesMoved) {
-                callbacks.axesMoved(p.key, p.dimensions.map(function(e) {return e.crossfilterDimensionIndex;}));
-            }
         })
     );
 
