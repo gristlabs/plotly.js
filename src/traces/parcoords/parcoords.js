@@ -52,6 +52,8 @@ function dimensionExtent(dimension) {
         }
     }
 
+    if(dimension.flipRange) return [hi, lo];
+
     return [lo, hi];
 }
 
@@ -206,7 +208,7 @@ function viewModel(state, callbacks, model) {
     var unitPad = c.verticalPadding / height;
     var _unitToPaddedPx = unitToPaddedPx(height, c.verticalPadding);
 
-    var viewModel = {
+    var vm = {
         key: model.key,
         xScale: xScale,
         model: model,
@@ -215,7 +217,7 @@ function viewModel(state, callbacks, model) {
 
     var uniqueKeys = {};
 
-    viewModel.dimensions = dimensions.filter(helpers.isVisible).map(function(dimension, i) {
+    vm.dimensions = dimensions.filter(helpers.isVisible).map(function(dimension, i) {
         var domainToPaddedUnit = domainToPaddedUnitScale(dimension, unitPad);
         var foundKey = uniqueKeys[dimension.label];
         uniqueKeys[dimension.label] = (foundKey || 0) + 1;
@@ -229,7 +231,7 @@ function viewModel(state, callbacks, model) {
             specifiedConstraint.map(function(d) { return d.map(domainToPaddedUnit); }) :
             [[-Infinity, Infinity]];
         var brushMove = function() {
-            var p = viewModel;
+            var p = vm;
             p.focusLayer && p.focusLayer.render(p.panels, true);
             var filtersActive = someFiltersActive(p);
             if(!state.contextShown() && filtersActive) {
@@ -289,6 +291,7 @@ function viewModel(state, callbacks, model) {
             xIndex: i,
             crossfilterDimensionIndex: i,
             visibleIndex: dimension._index,
+            flipRange: !!dimension._fliprange,
             height: height,
             values: truncatedValues,
             paddedUnitValues: truncatedValues.map(domainToPaddedUnit),
@@ -299,7 +302,7 @@ function viewModel(state, callbacks, model) {
             unitToPaddedPx: _unitToPaddedPx,
             domainScale: domainScale(height, c.verticalPadding, dimension, tickvals, ticktext),
             ordinalScale: ordinalScale(dimension),
-            parent: viewModel,
+            parent: vm,
             model: model,
             brush: brush.makeBrush(
                 state,
@@ -310,7 +313,7 @@ function viewModel(state, callbacks, model) {
                 },
                 brushMove,
                 function(f) {
-                    var p = viewModel;
+                    var p = vm;
                     p.focusLayer.render(p.panels, true);
                     p.pickLayer && p.pickLayer.render(p.panels, true);
                     state.linePickActive(true);
@@ -328,7 +331,7 @@ function viewModel(state, callbacks, model) {
         };
     });
 
-    return viewModel;
+    return vm;
 }
 
 function styleExtentTexts(selection) {
@@ -399,26 +402,29 @@ function calcAllTicks(cd) {
     }
 }
 
-module.exports = function parcoords(gd, cdModule, layout, callbacks) {
-    var state = parcoordsInteractionState();
+function linearFormat(dim, v) {
+    return Axes.tickText(dim._ax, v, false).text;
+}
 
+function extremeText(d, isTop) {
+    if(d.ordinal) return '';
+    var domain = d.domainScale.domain();
+    var v = (domain[isTop ? domain.length - 1 : 0]);
+
+    return linearFormat(d.model.dimensions[d.visibleIndex], v);
+}
+
+var draggingLabel = false;
+var flippingRange = false;
+
+module.exports = function parcoords(gd, cdModule, layout, callbacks) {
     var fullLayout = gd._fullLayout;
     var svg = fullLayout._toppaper;
     var glContainer = fullLayout._glcontainer;
 
-    function linearFormat(dim, v) {
-        return Axes.tickText(dim._ax, v, false).text;
-    }
-
-    function extremeText(d, isTop) {
-        if(d.ordinal) return '';
-        var domain = d.domainScale.domain();
-        var v = (domain[isTop ? domain.length - 1 : 0]);
-
-        return linearFormat(d.model.dimensions[d.visibleIndex], v);
-    }
-
     calcAllTicks(cdModule);
+
+    var state = parcoordsInteractionState();
 
     var vm = cdModule
         .filter(function(d) { return unwrap(d).trace.visible; })
@@ -543,6 +549,8 @@ module.exports = function parcoords(gd, cdModule, layout, callbacks) {
     yAxis.call(d3.behavior.drag()
         .origin(function(d) { return d; })
         .on('drag', function(d) {
+            if(flippingRange) return;
+
             var p = d.parent;
             state.linePickActive(false);
             d.x = Math.max(-c.overdrag, Math.min(d.model.width + c.overdrag, d3.event.x));
@@ -563,8 +571,13 @@ module.exports = function parcoords(gd, cdModule, layout, callbacks) {
             yAxis.each(function(e, i0, i1) { if(i1 === d.parent.key) p.dimensions[i0] = e; });
             p.contextLayer && p.contextLayer.render(p.panels, false, !someFiltersActive(p));
             p.focusLayer.render && p.focusLayer.render(p.panels);
+
+            draggingLabel = true;
         })
         .on('dragend', function(d) {
+            if(flippingRange) return;
+            if(!draggingLabel) return;
+
             var p = d.parent;
             d.x = d.xScale(d.xIndex);
             d.canvasX = d.x * d.model.canvasPixelRatio;
@@ -579,6 +592,8 @@ module.exports = function parcoords(gd, cdModule, layout, callbacks) {
             if(callbacks && callbacks.axesMoved) {
                 callbacks.axesMoved(p.key, p.dimensions.map(function(e) {return e.crossfilterDimensionIndex;}));
             }
+
+            draggingLabel = undefined;
         })
     );
 
@@ -677,6 +692,31 @@ module.exports = function parcoords(gd, cdModule, layout, callbacks) {
             } else {
                 return 'middle';
             }
+        })
+        .on('click', function(d, i, n) {
+            if(draggingLabel === undefined) {
+                draggingLabel = false;
+                return;
+            }
+
+            var q = d.visibleIndex;
+            d.model.dimensions[n].flipRange =
+                cdModule[0][0].trace.dimensions[q]._fliprange =
+                !cdModule[0][0].trace.dimensions[q]._fliprange;
+
+            controlOverlay.remove();
+            yAxis.remove();
+            axisOverlays.remove();
+            axis.remove();
+            axisHeading.remove();
+            axisTitle.remove();
+
+            flippingRange = true;
+
+            // recursive call
+            parcoords(gd, cdModule, layout, callbacks);
+
+            flippingRange = false;
         });
 
     var axisExtent = axisOverlays.selectAll('.' + c.cn.axisExtent)
